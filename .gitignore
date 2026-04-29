@@ -1,21 +1,24 @@
-# Environment variables
-.env
-
-# Virtual environment
+# Virtual environments
+.venv/
 venv/
 env/
 ENV/
-__pycache__/
 
-# Logs
-*.log
+# S3 deploy script (contains bucket name)
+s3_model_deploy.py
 
-# AWS key — never push this!
+# AWS key
 *.pem
 
 # Model and data files
 model.pkl
 *.csv
+
+# Python cache
+__pycache__/
+
+# Logs
+*.log
 
 # IDE
 .vscode/
@@ -23,3 +26,6 @@ model.pkl
 
 # Jupyter
 .ipynb_checkpoints
+
+# Environment variables
+.env
