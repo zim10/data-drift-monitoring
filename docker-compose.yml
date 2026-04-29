@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   churn-api:
-    image: <your-dockerhub-username>/churn-prediction-app:latest
+    image: zim22/churn-prediction-app
     container_name: churn-api
     restart: always
     ports:
