@@ -1,0 +1,25 @@
+# Environment variables
+.env
+
+# Virtual environment
+venv/
+env/
+ENV/
+__pycache__/
+
+# Logs
+*.log
+
+# AWS key — never push this!
+*.pem
+
+# Model and data files
+model.pkl
+*.csv
+
+# IDE
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints
