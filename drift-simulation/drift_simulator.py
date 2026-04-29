@@ -5,7 +5,7 @@ import time
 import random
 from tqdm import tqdm
 
-API_URL = "http://<EC2-PUBLIC-IP>:8000/predict"  # ← replace this
+API_URL = "http://18.141.215.53:8000/predict"  # ← replace this
 
 df = pd.read_csv("WA_FnUseC_TelcoCustomerChurn.csv")
 
