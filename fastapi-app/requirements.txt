@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+pydantic
+pandas
+numpy
+scikit-learn
+boto3
+prometheus-client
+prometheus-fastapi-instrumentator
