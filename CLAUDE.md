@@ -63,7 +63,7 @@ Every new session gives you:
 
 ---
 
-## How to Start Fresh on Poridhi Server
+## How to Start Fresh on  Server
 
 ### Phase 1 — Install Tools
 
@@ -163,7 +163,7 @@ docker ps
 ### Phase 5 — Run Drift Simulator
 
 ```bash
-# Back on Poridhi (not EC2)
+# Back on server (not EC2)
 cd ~/data-drift-monitoring/drift-simulation
 
 # Download dataset
