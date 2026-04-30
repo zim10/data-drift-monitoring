@@ -11,23 +11,35 @@ data-drift-monitoring/
 ├── fastapi-app/
 │   ├── main.py              # FastAPI app with Prometheus metrics
 │   ├── models.py            # PostgreSQL models (SQLAlchemy)
-│   ├── requirements.txt     # Python dependencies
 │   └── Dockerfile           # Container for FastAPI app
 ├── drift-simulation/
-│   ├── drift_simulator.py   # Simulates 4 phases of data drift
-│   └── requirements.txt     # Simulator dependencies
+│   └── drift_simulator.py   # Simulates 4 phases of data drift
 ├── infrastructure/
 │   ├── __main__.py          # Pulumi AWS infrastructure code
 │   ├── Pulumi.yaml          # Pulumi project config
 │   ├── Pulumi.dev.yaml      # Pulumi dev stack config
-│   └── requirements.txt     # Pulumi dependencies
+│   └── requirements.txt     # Pulumi specific dependencies
 ├── monitoring/
 │   └── prometheus.yml       # Prometheus scrape config
 ├── docker-compose.yml       # Runs all 4 containers together
+├── requirements.txt         # ONE root level requirements for everything
 ├── CLAUDE.md                # This file
 ├── .gitignore
 └── README.md
 ```
+
+## ⚠️ Important: Two Virtual Environments
+
+This project has two venvs — this is normal and expected:
+
+```
+data-drift-monitoring/
+├── .venv/                ← YOUR venv (awscli, boto3, pandas...)
+└── infrastructure/
+    └── .venv/            ← PULUMI's venv (auto created by Pulumi)
+```
+
+Both are gitignored. Pulumi always manages its own venv automatically.
 
 ## Tech Stack
 - **FastAPI** — serves ML model as REST API
@@ -39,89 +51,162 @@ data-drift-monitoring/
 - **AWS S3** — stores trained ML model (model.pkl)
 - **Pulumi** — provisions AWS infrastructure with Python
 
+---
+
+## ⚠️ Poridhi Server Warning
+
+Every new Poridhi session gives you:
+- NEW AWS Access Key and Secret Key
+- FRESH AWS environment — EC2, S3, key pairs are all gone!
+- Must reinstall tools every session (awscli, pulumi)
+- Must run `pulumi refresh --yes` to clear old state
+
+---
+
 ## How to Start Fresh on Poridhi Server
 
-### 1. Clone the repo
-```bash
-git clone https://github.com/your-username/data-drift-monitoring.git
-cd data-drift-monitoring
-```
+### Phase 1 — Install Tools
 
-### 2. Setup infrastructure virtual environment
 ```bash
+# Install Python venv
+sudo apt update && sudo apt install python3-venv -y
+
+# Clone repo
+git clone https://github.com/zim10/data-drift-monitoring.git
+cd data-drift-monitoring
+
+# Create and activate venv
 python3 -m venv .venv
 source .venv/bin/activate
+
+# Install project packages
 pip install -r requirements.txt
+
+# Install AWS CLI
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version   # verify
+
+# Install Pulumi
+curl -fsSL https://get.pulumi.com | sh
+export PATH=$PATH:$HOME/.pulumi/bin
+pulumi version  # verify
 ```
 
-### 3. Configure AWS credentials
+### Phase 2 — Configure AWS and Deploy Infrastructure
+
 ```bash
+# Configure new AWS credentials (new every Poridhi session!)
 aws configure
-# Enter: Access Key, Secret Key, region (us-east-1), format (json)
-```
+# Enter: Access Key, Secret Key, region: us-east-1, format: json
 
-### 4. Create SSH key pair (if not exists)
-```bash
+# Verify credentials
+aws sts get-caller-identity
+
+# Go to infrastructure folder
+cd infrastructure
+
+# Create NEW SSH key pair (fresh every Poridhi session!)
 aws ec2 create-key-pair \
   --key-name key-pair-poridhi-poc \
   --query 'KeyMaterial' \
   --output text > key-pair-poridhi-poc.pem
 chmod 400 key-pair-poridhi-poc.pem
-```
 
-### 5. Deploy AWS infrastructure
-```bash
+# Login to Pulumi
+pulumi login
+
+# Select existing stack
+pulumi stack select zim10/data-drift-monitoring/dev
+
+# Refresh state (clears old AWS resources — critical for Poridhi!)
+pulumi refresh --yes
+
+# Deploy fresh infrastructure
 pulumi up --yes
-# Note down: EC2 Public IP and S3 Bucket Name from output
+# ✅ Note down EC2 Public IP and S3 Bucket Name from output!
 ```
 
-### 6. Upload model to S3
+### Phase 3 — Upload Model to S3
+
 ```bash
 cd ..
+
+# Download model
 curl -o model.pkl https://raw.githubusercontent.com/minhaz00/MLOps-Project-Customer-Churn-Prediction/main/Model/logistic_regression_model.pkl
-# Create and run s3_model_deploy.py with your bucket name
-# (do not push this file to GitHub)
+
+# Create s3_model_deploy.py with your bucket name and run:
+python3 s3_model_deploy.py
+# ⚠️ Never push s3_model_deploy.py to GitHub!
 ```
 
-### 7. SSH into EC2 and deploy
+### Phase 4 — Deploy on EC2
+
 ```bash
+# SSH into EC2
 ssh -i infrastructure/key-pair-poridhi-poc.pem ubuntu@<EC2-PUBLIC-IP>
-git clone https://github.com/your-username/data-drift-monitoring.git
+
+# On EC2 — install Docker
+sudo apt update && sudo apt install -y docker-ce docker-compose
+sudo chmod 666 /var/run/docker.sock
+
+# Clone repo and run containers
+git clone https://github.com/zim10/data-drift-monitoring.git
 cd data-drift-monitoring
 docker-compose up -d
+
+# Verify 4 containers running
+docker ps
 ```
 
-### 8. Run drift simulator (on Poridhi, not EC2)
+### Phase 5 — Run Drift Simulator
+
 ```bash
-cd drift-simulation
-pip install -r requirements.txt
+# Back on Poridhi (not EC2)
+cd ~/data-drift-monitoring/drift-simulation
+
+# Download dataset
 curl -o WA_FnUseC_TelcoCustomerChurn.csv \
   https://raw.githubusercontent.com/minhaz00/MLOps-Project-Customer-Churn-Prediction/main/Data/Telco-Customer-Churn.csv
+
 # Update EC2 IP in drift_simulator.py first!
+# Then run:
 python3 drift_simulator.py
 ```
+
+---
+
+## Key Pulumi Commands
+
+```bash
+pulumi version                                        # check pulumi installed
+pulumi login                                          # login to Pulumi cloud
+pulumi stack select zim10/data-drift-monitoring/dev   # select stack
+pulumi stack                                          # check stack and resources
+pulumi preview                                        # preview what will be created
+pulumi up --yes                                       # deploy infrastructure
+pulumi refresh --yes                                  # sync state with real AWS
+pulumi destroy --yes                                  # destroy all resources
+pulumi stack ls                                       # list all stacks
+```
+
+---
 
 ## Docker Commands
 
 ```bash
-# Start all containers
-docker-compose up -d
-
-# Stop all containers
-docker-compose down
-
-# Check running containers
-docker ps
-
-# View logs
-docker logs churn-api
-docker logs prometheus
-docker logs grafana
-docker logs postgres
-
-# Restart a specific container
-docker restart churn-api
+docker-compose up -d          # start all containers
+docker-compose down           # stop all containers
+docker ps                     # check running containers
+docker logs churn-api         # view API logs
+docker logs prometheus        # view Prometheus logs
+docker logs grafana           # view Grafana logs
+docker logs postgres          # view DB logs
+docker restart churn-api      # restart a container
 ```
+
+---
 
 ## Key URLs (replace with your EC2 IP)
 - FastAPI Docs: http://<EC2-IP>:8000/docs
@@ -149,25 +234,20 @@ docker restart churn-api
 - Phase 3 (50 batches) — Concept drift, behavior patterns change
 - Phase 4 (50 batches) — Back to normal patterns
 
+---
+
 ## Important Rules
 - NEVER push: .pem files, .env, model.pkl, *.csv, .venv/
 - ALWAYS run git status before pushing
-- Use feature branches for new features: git checkout -b feature/name
 - s3_model_deploy.py contains bucket name — never push it
+- Use feature branches for new features: git checkout -b feature/name
 
 ## Git Workflow
 ```bash
-# Check status before anything
-git status
-
-# Push specific folder
-git add fastapi-app/
-git commit -m "Update FastAPI app"
-git push
-
-# Push everything
-git add -A
-git commit -m "Your message"
+git status                          # always check first
+git add fastapi-app/                # push specific folder
+git add -A                          # push everything
+git commit -m "your message"
 git push
 ```
 
