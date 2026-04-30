@@ -56,8 +56,8 @@ Infrastructure provisioned with Pulumi
 data-drift-monitoring/
 ├── fastapi-app/
 │   ├── main.py              # FastAPI app with Prometheus metrics
-│   ├── models.py            # PostgreSQL models
-│   ├── requirements.txt     # Python dependencies
+│   ├── models.py            # PostgreSQL models (SQLAlchemy)
+│   ├── requirements.txt     # FastAPI specific dependencies
 │   └── Dockerfile           # Container for FastAPI app
 ├── drift-simulation/
 │   ├── drift_simulator.py   # Simulates 4 phases of data drift
@@ -65,10 +65,12 @@ data-drift-monitoring/
 ├── infrastructure/
 │   ├── __main__.py          # Pulumi AWS infrastructure code
 │   ├── Pulumi.yaml          # Pulumi project config
-│   └── requirements.txt     # Pulumi dependencies
+│   ├── Pulumi.dev.yaml      # Pulumi dev stack config
+│   └── requirements.txt     # Pulumi specific dependencies
 ├── monitoring/
 │   └── prometheus.yml       # Prometheus scrape config
-├── docker-compose.yml       # Runs all 4 containers
+├── docker-compose.yml       # Runs all 4 containers together
+├── requirements.txt         # Root level — all project dependencies
 ├── CLAUDE.md                # Claude Code context file
 ├── .gitignore
 └── README.md
@@ -95,16 +97,25 @@ git clone https://github.com/your-username/data-drift-monitoring.git
 cd data-drift-monitoring
 ```
 
-### Step 2 — Set Up AWS Infrastructure
+### Step 2 — Setup Virtual Environment
 
 ```bash
-cd infrastructure
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-# Configure AWS
+### Step 3 — Configure AWS
+
+```bash
 aws configure
+# Enter: Access Key, Secret Key, region (us-east-1), format (json)
+```
+
+### Step 4 — Set Up AWS Infrastructure
+
+```bash
+cd infrastructure
 
 # Create SSH key pair
 aws ec2 create-key-pair \
@@ -117,58 +128,60 @@ chmod 400 key-pair-poridhi-poc.pem
 pulumi up --yes
 ```
 
-> Note down the **EC2 Public IP** and **S3 Bucket Name** from the output!
+> ✅ Note down the **EC2 Public IP** and **S3 Bucket Name** from the output!
 
-### Step 3 — Upload ML Model to S3
+### Step 5 — Upload ML Model to S3
 
 ```bash
 cd ..
 curl -o model.pkl https://raw.githubusercontent.com/minhaz00/MLOps-Project-Customer-Churn-Prediction/main/Model/logistic_regression_model.pkl
-pip install boto3
+
 # Create s3_model_deploy.py with your bucket name and run:
 python3 s3_model_deploy.py
+
+# ⚠️ Never push s3_model_deploy.py to GitHub!
 ```
 
-### Step 4 — Set Up IAM Permissions
+### Step 6 — Set Up IAM Permissions
 
-- Create IAM Policy `S3ModelAccessPolicy` with S3 read/write access
-- Create IAM Role `EC2S3AccessRole` and attach the policy
+- Go to **AWS Console → IAM → Policies → Create Policy**
+- Create policy `S3ModelAccessPolicy` with S3 access
+- Create role `EC2S3AccessRole` and attach the policy
 - Attach the role to your EC2 instance
 
-### Step 5 — Build and Push Docker Image
+### Step 7 — Build and Push Docker Image
 
 ```bash
 cd fastapi-app
+
 # Update S3_BUCKET in main.py with your bucket name
 docker build -t churn-prediction-app .
 docker tag churn-prediction-app:latest <your-dockerhub-username>/churn-prediction-app:latest
 docker push <your-dockerhub-username>/churn-prediction-app:latest
 ```
 
-### Step 6 — Deploy on EC2
+### Step 8 — Deploy on EC2
 
 ```bash
 # SSH into EC2
 ssh -i infrastructure/key-pair-poridhi-poc.pem ubuntu@<EC2-PUBLIC-IP>
 
-# Install Docker and Docker Compose
-sudo apt update && sudo apt install -y docker-ce docker-compose
-
-# Clone repo and run
+# Clone repo on EC2
 git clone https://github.com/your-username/data-drift-monitoring.git
 cd data-drift-monitoring
+
+# Run all containers
 docker-compose up -d
 
 # Verify all 4 containers are running
 docker ps
 ```
 
-### Step 7 — Run Drift Simulator
+### Step 9 — Run Drift Simulator
 
 ```bash
 # On Poridhi server (not EC2)
 cd drift-simulation
-pip install -r requirements.txt
 
 # Download dataset
 curl -o WA_FnUseC_TelcoCustomerChurn.csv \
@@ -178,12 +191,13 @@ curl -o WA_FnUseC_TelcoCustomerChurn.csv \
 python3 drift_simulator.py
 ```
 
-### Step 8 — Visualize in Grafana
+### Step 10 — Visualize in Grafana
 
 1. Open `http://<EC2-PUBLIC-IP>:3000` → Login: `admin/admin`
 2. Go to **Settings → Data Sources → Add Prometheus**
-3. URL: `http://<EC2-PUBLIC-IP>:9090` → Save & Test
-4. Create dashboard with these queries:
+3. URL: `http://<EC2-PUBLIC-IP>:9090` → **Save & Test**
+4. Go to **Dashboards → New Dashboard → Add Visualization**
+5. Use these Prometheus queries:
 
 | Panel | Prometheus Query |
 |---|---|
@@ -191,6 +205,7 @@ python3 drift_simulator.py
 | Total Predictions | `churn_prediction_count_total` |
 | API Latency | `churn_prediction_latency_seconds` |
 | Input Feature Values | `churn_input_feature` |
+| Prediction Distribution | `churn_prediction_distribution` |
 
 ---
 
@@ -240,6 +255,39 @@ python3 drift_simulator.py
 
 ---
 
+## Useful Docker Commands
+
+```bash
+# Start all containers
+docker-compose up -d
+
+# Stop all containers
+docker-compose down
+
+# Check running containers
+docker ps
+
+# View logs
+docker logs churn-api
+docker logs prometheus
+docker logs grafana
+docker logs postgres
+
+# Restart a container
+docker restart churn-api
+```
+
+---
+
+## Important Notes
+
+- Never push `.pem` files, `.env`, `model.pkl`, or `*.csv` to GitHub
+- `s3_model_deploy.py` contains your bucket name — never push it
+- Always run `git status` before pushing
+- Use feature branches for new features: `git checkout -b feature/name`
+
+---
+
 ## Roadmap
 
 - [x] Phase 1 — Basic drift monitoring (FastAPI + Prometheus + Grafana)
@@ -247,14 +295,6 @@ python3 drift_simulator.py
 - [ ] Phase 3 — Automated alerting in Grafana
 - [ ] Phase 4 — Automated retraining trigger
 - [ ] Phase 5 — CI/CD pipeline
-
----
-
-## Important Notes
-
-- Never push `.pem` files, `.env`, `model.pkl`, or `*.csv` to GitHub
-- Always add sensitive files to `.gitignore` before first commit
-- `s3_model_deploy.py` contains your bucket name — never push it
 
 ---
 
