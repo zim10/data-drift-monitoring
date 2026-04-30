@@ -76,9 +76,9 @@ data-drift-monitoring/
 
 ---
 
-## ⚠️ Poridhi Server Users
+## ⚠️ My current Server 
 
-Every new Poridhi session gives you **fresh AWS credentials and a fresh AWS environment**. EC2, S3, and key pairs are all gone each session. Follow the full setup below every time.
+Every session gives me **fresh AWS credentials and a fresh AWS environment**. EC2, S3, and key pairs are all gone each session. I Follow the full setup below every time.
 
 ---
 
@@ -133,7 +133,7 @@ aws ec2 create-key-pair \
   --output text > key-pair-poridhi-poc.pem
 chmod 400 key-pair-poridhi-poc.pem
 
-# Login to Pulumi
+# Login to Pulumi and use access key (saved it initially)
 pulumi login
 
 # Select existing stack
