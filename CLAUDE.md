@@ -49,7 +49,6 @@ cd data-drift-monitoring
 
 ### 2. Setup infrastructure virtual environment
 ```bash
-cd infrastructure
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

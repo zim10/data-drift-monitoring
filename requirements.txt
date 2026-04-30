@@ -1,0 +1,23 @@
+# AWS CLI and Pulumi
+pulumi
+pulumi-aws
+awscli
+
+# S3 model upload
+boto3
+
+# Drift simulator
+requests
+pandas
+numpy
+tqdm
+
+
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+pydantic
+scikit-learn
+prometheus-client
+prometheus-fastapi-instrumentator
