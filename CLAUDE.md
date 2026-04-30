@@ -53,9 +53,9 @@ Both are gitignored. Pulumi always manages its own venv automatically.
 
 ---
 
-## ⚠️ Poridhi Server Warning
+## ⚠️ My Current Server Warning
 
-Every new Poridhi session gives you:
+Every new session gives you:
 - NEW AWS Access Key and Secret Key
 - FRESH AWS environment — EC2, S3, key pairs are all gone!
 - Must reinstall tools every session (awscli, pulumi)
