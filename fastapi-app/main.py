@@ -35,7 +35,7 @@ PREDICTION_DISTRIBUTION = Histogram(
 )
 
 # S3 Config
-S3_BUCKET = "customer-churn-model-bucket-4321-34245fe"   # ← replace this
+S3_BUCKET = "customer-churn-model-bucket-4321-2d874dc"   # ← replace this
 MODEL_KEY = "model.pkl"
 
 # Load model from S3
