@@ -14,6 +14,7 @@ from prometheus_client import Counter, Histogram, Gauge, make_asgi_app
 import time
 import statistics
 from datetime import datetime
+import os
 
 # Prometheus Metrics
 PREDICTION_COUNT = Counter(
@@ -35,7 +36,7 @@ PREDICTION_DISTRIBUTION = Histogram(
 )
 
 # S3 Config
-S3_BUCKET = "customer-churn-model-bucket-4321-2d874dc"   # ← replace this
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
 MODEL_KEY = "model.pkl"
 
 # Load model from S3

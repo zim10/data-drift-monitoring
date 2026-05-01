@@ -68,7 +68,7 @@ server_instance = aws.ec2.Instance('server_instance',
 )
 
 # S3 Bucket
-models_bucket = aws.s3.Bucket("customer-churn-model-bucket-4321",
+models_bucket = aws.s3.Bucket("customer-churn-model-bucket-4321-2d874dc",
     acl="private",
     versioning=aws.s3.BucketVersioningArgs(enabled=True),
 )

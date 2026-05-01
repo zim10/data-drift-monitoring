@@ -148,7 +148,29 @@ pulumi up --yes
 
 > ✅ Note down the **EC2 Public IP** and **S3 Bucket Name** from the output!
 
-### Phase 3 — Set Up IAM Permissions
+
+### Phase 3 — Upload ML Model to S3
+
+# After pulumi up — get your real bucket name
+pulumi stack output models_bucket_name
+
+# Update s3_model_deploy.py with this bucket name
+# Then run:
+python3 s3_model_deploy.py
+
+```bash
+cd ..
+
+# Download model
+curl -o model.pkl https://raw.githubusercontent.com/minhaz00/MLOps-Project-Customer-Churn-Prediction/main/Model/logistic_regression_model.pkl
+
+# Create s3_model_deploy.py with your bucket name and run:
+python3 s3_model_deploy.py
+
+# ⚠️ Never push s3_model_deploy.py to GitHub!
+```
+
+### Phase 4 — Set Up IAM Permissions
 
 - Go to **AWS Console → IAM → Policies → Create Policy**
 - Create policy `S3ModelAccessPolicy` with S3 access:
@@ -172,22 +194,12 @@ pulumi up --yes
 - Create role `EC2S3AccessRole` and attach `S3ModelAccessPolicy`
 - Attach the role to your EC2 instance via **Actions → Security → Modify IAM Role**
 
-### Phase 4 — Upload ML Model to S3
 
-```bash
-cd ..
 
-# Download model
-curl -o model.pkl https://raw.githubusercontent.com/minhaz00/MLOps-Project-Customer-Churn-Prediction/main/Model/logistic_regression_model.pkl
 
-# Create s3_model_deploy.py with your bucket name and run:
-python3 s3_model_deploy.py
-
-# ⚠️ Never push s3_model_deploy.py to GitHub!
-```
 
 ### Phase 5 — Build and Push Docker Image
-- if you have updated docker image in your Docker Repositores, you can skip phase-5
+- if you have updated docker image in your Docker Repositores, you can skip phase-5 but during deploy this image in EC2 instance, must Update docker-compose.yml section in EC2 instance, open docker-compose.yml using nano and update bucket name here. then you do not need to push your image to docker hub, can skip the following line. 
 
 ```bash
 cd fastapi-app

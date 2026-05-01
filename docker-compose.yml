@@ -5,6 +5,8 @@ services:
     image: zim22/churn-prediction-app
     container_name: churn-api
     restart: always
+    environment:
+     - S3_BUCKET=your-bucket-name # ← only change this next time!
     ports:
       - "8000:8000"
     depends_on:
