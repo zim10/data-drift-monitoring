@@ -148,8 +148,21 @@ python3 s3_model_deploy.py
 ssh -i infrastructure/key-pair-poridhi-poc.pem ubuntu@<EC2-PUBLIC-IP>
 
 # On EC2 — install Docker
-sudo apt update && sudo apt install -y docker-ce docker-compose
+# Install Docker on EC2
+sudo apt update
+sudo apt install -y docker.io    # use docker.io NOT docker-ce!
+sudo systemctl start docker
+sudo systemctl enable docker
 sudo chmod 666 /var/run/docker.sock
+sudo usermod -aG docker ${USER}
+newgrp docker
+
+# ⚠️ If Docker fails — reboot EC2 (kernel mismatch issue on AWS Ubuntu)
+sudo reboot
+# Wait 1-2 minutes then SSH back in
+ssh -i infrastructure/key-pair-poridhi-poc.pem ubuntu@<EC2-PUBLIC-IP>
+sudo chmod 666 /var/run/docker.sock
+docker ps   # should work now!
 
 # Clone repo and run containers
 git clone https://github.com/zim10/data-drift-monitoring.git
@@ -257,3 +270,20 @@ git push
 - [ ] Phase 3 — Automated alerting in Grafana
 - [ ] Phase 4 — Automated retraining trigger
 - [ ] Phase 5 — CI/CD pipeline
+
+
+## Known Issues
+
+### Docker fails to start on EC2
+**Error:** `Job for docker.service failed`
+**Cause:** AWS Ubuntu EC2 has kernel mismatch
+**Fix:**
+1. Use `docker.io` instead of `docker-ce`
+2. Run `sudo reboot`
+3. SSH back in after 1-2 minutes
+4. Run `sudo chmod 666 /var/run/docker.sock`
+
+### Pulumi state mismatch
+**Error:** Resources exist in state but not in AWS
+**Cause:** Fresh Poridhi session = fresh AWS account
+**Fix:** Run `pulumi refresh --yes` before `pulumi up --yes`

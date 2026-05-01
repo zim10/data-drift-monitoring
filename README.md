@@ -187,6 +187,7 @@ python3 s3_model_deploy.py
 ```
 
 ### Phase 5 — Build and Push Docker Image
+- if you have updated docker image in your Docker Repositores, you can skip phase-5
 
 ```bash
 cd fastapi-app
@@ -205,8 +206,16 @@ ssh -i infrastructure/key-pair-poridhi-poc.pem ubuntu@<EC2-PUBLIC-IP>
 
 # Install Docker on EC2
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker-ce docker-compose
+sudo apt install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
 sudo chmod 666 /var/run/docker.sock
+sudo usermod -aG docker ${USER}
+newgrp docker
+
+# ⚠️ Reboot EC2 if Docker fails to start (kernel mismatch issue)
+sudo reboot
+# SSH back in after 1-2 minutes
 
 # Clone repo and run containers
 git clone https://github.com/zim10/data-drift-monitoring.git
