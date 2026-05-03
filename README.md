@@ -172,7 +172,7 @@ python3 s3_model_deploy.py
 
 ### Phase 4 — Set Up IAM Permissions
 
-- Go to **AWS Console → IAM → Policies → Create Policy**
+<!-- - Go to **AWS Console → IAM → Policies → Create Policy**
 - Create policy `S3ModelAccessPolicy` with S3 access:
 
 ```json
@@ -192,7 +192,8 @@ python3 s3_model_deploy.py
 ```
 
 - Create role `EC2S3AccessRole` and attach `S3ModelAccessPolicy`
-- Attach the role to your EC2 instance via **Actions → Security → Modify IAM Role**
+- Attach the role to your EC2 instance via **Actions → Security → Modify IAM Role** -->
+✅ Automatically handled by Pulumi — no manual setup needed!
 
 
 

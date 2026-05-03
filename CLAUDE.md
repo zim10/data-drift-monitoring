@@ -342,3 +342,10 @@ git push
 2. `model-drift/scripts/dataset-upload.py` → DATASET_BUCKET
 3. `model-drift/scripts/monitor.py` → S3_BUCKET
 **Fix:** Run `pulumi stack output models_bucket_name` to get new name
+
+### S3 Permission Errors
+**Cause:** Usually means pulumi up didn't complete successfully
+**Fix:** 
+1. Run pulumi refresh --yes
+2. Run pulumi up --yes again
+3. IAM is automatic — no manual console work needed!
