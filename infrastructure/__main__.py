@@ -1,5 +1,7 @@
+import json
 import pulumi
 import pulumi_aws as aws
+
 
 # VPC
 vpc = aws.ec2.Vpc("poridhi-vpc",
@@ -49,13 +51,63 @@ security_group = aws.ec2.SecurityGroup("poridhi-security-group",
     ]
 )
 
-# EC2 Instance
+# S3 Bucket
+models_bucket = aws.s3.Bucket("customer-churn-model-bucket",
+    acl="private",
+    versioning=aws.s3.BucketVersioningArgs(enabled=True),
+)
+
+# IAM Role for EC2
+ec2_role = aws.iam.Role("ec2-s3-access-role",
+    assume_role_policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ec2.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    })
+)
+
+# IAM Policy for S3 Access
+s3_policy = aws.iam.Policy("s3-access-policy",
+    policy=models_bucket.id.apply(lambda bucket_name: json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                f"arn:aws:s3:::{bucket_name}",
+                f"arn:aws:s3:::{bucket_name}/*"
+            ]
+        }]
+    }))
+)
+
+# Attach S3 policy to IAM role
+s3_policy_attachment = aws.iam.RolePolicyAttachment("s3-policy-attachment",
+    role=ec2_role.name,
+    policy_arn=s3_policy.arn
+)
+
+# Create Instance Profile
+instance_profile = aws.iam.InstanceProfile("ec2-instance-profile",
+    role=ec2_role.name
+)
+
+# EC2 Instance with IAM Instance Profile
 server_instance = aws.ec2.Instance('server_instance',
     instance_type='t3.small',
     ami='ami-01811d4912b4ccb26',
     vpc_security_group_ids=[security_group.id],
     subnet_id=subnet.id,
     key_name='key-pair-poridhi-poc',
+    iam_instance_profile=instance_profile.name,
     ebs_block_devices=[
         aws.ec2.InstanceEbsBlockDeviceArgs(
             device_name="/dev/sda1",
@@ -65,12 +117,6 @@ server_instance = aws.ec2.Instance('server_instance',
         ),
     ],
     tags={'Name': 'server_instance'}
-)
-
-# S3 Bucket
-models_bucket = aws.s3.Bucket("customer-churn-model-bucket-4321-2d874dc",
-    acl="private",
-    versioning=aws.s3.BucketVersioningArgs(enabled=True),
 )
 
 # Outputs
