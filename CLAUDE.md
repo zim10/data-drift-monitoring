@@ -19,6 +19,12 @@ data-drift-monitoring/
 │   ├── Pulumi.yaml          # Pulumi project config
 │   ├── Pulumi.dev.yaml      # Pulumi dev stack config
 │   └── requirements.txt     # Pulumi specific dependencies
+├── model-drift/              ← NEW
+│   └── scripts/
+│       ├── prediction-generator.py  # generates predictions on EC2
+│       ├── monitor.py               # Evidently AI drift reports
+│       ├── dataset-upload.py        # uploads dataset to S3
+│       └── model-upload.py          # uploads model to S3
 ├── monitoring/
 │   └── prometheus.yml       # Prometheus scrape config
 ├── docker-compose.yml       # Runs all 4 containers together
@@ -190,6 +196,48 @@ python3 drift_simulator.py
 
 ---
 
+## Model Drift Monitoring (Evidently AI)
+
+### What it does
+- Fetches reference dataset from S3
+- Fetches current predictions from PostgreSQL
+- Compares them using Evidently AI
+- Generates HTML drift reports
+- Saves reports back to S3
+
+### S3 Bucket Usage
+Both scripts need S3 bucket name — update each Poridhi session:
+- dataset-upload.py → DATASET_BUCKET variable
+- monitor.py → S3_BUCKET variable
+
+Get bucket name:
+\```bash
+cd infrastructure
+pulumi stack output models_bucket_name
+\```
+
+### How to Run (on EC2 — not Poridhi!)
+\```bash
+# SSH into EC2 first
+ssh -i infrastructure/key-pair-poridhi-poc.pem ubuntu@<EC2-PUBLIC-IP>
+cd data-drift-monitoring
+
+# Install dependencies
+pip install evidently pandas psycopg2-binary sqlalchemy boto3
+
+# Step 1 — Generate predictions first
+python3 model-drift/scripts/prediction-generator.py
+
+# Step 2 — Run drift monitor
+python3 model-drift/scripts/monitor.py
+\```
+
+### Verify Reports
+- Go to AWS Console → S3 → your bucket
+- Check reports/ folder
+- HTML drift reports should be there
+
+
 ## Key Pulumi Commands
 
 ```bash
@@ -266,7 +314,7 @@ git push
 
 ## Project Roadmap
 - [x] Phase 1 — Basic drift monitoring (FastAPI + Prometheus + Grafana)
-- [ ] Phase 2 — Model drift detection
+- [x] Phase 2 — Model drift detection (Evidently AI)    ← update this!
 - [ ] Phase 3 — Automated alerting in Grafana
 - [ ] Phase 4 — Automated retraining trigger
 - [ ] Phase 5 — CI/CD pipeline
@@ -287,3 +335,10 @@ git push
 **Error:** Resources exist in state but not in AWS
 **Cause:** Fresh Poridhi session = fresh AWS account
 **Fix:** Run `pulumi refresh --yes` before `pulumi up --yes`
+
+### S3 Bucket name changes every Poridhi session
+**Files to update each session:**
+1. `docker-compose.yml` → S3_BUCKET env variable
+2. `model-drift/scripts/dataset-upload.py` → DATASET_BUCKET
+3. `model-drift/scripts/monitor.py` → S3_BUCKET
+**Fix:** Run `pulumi stack output models_bucket_name` to get new name
