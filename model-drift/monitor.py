@@ -9,11 +9,9 @@ import os
 import sys
 import json
 from datetime import datetime
-from evidently.dashboard import Dashboard
-from evidently.tabs import DataDriftTab, CatTargetDriftTab, NumTargetDriftTab
-from evidently.pipeline.column_mapping import ColumnMapping
-from evidently.report import Report
-from evidently.metric_preset import DataDriftPreset, TargetDriftPreset, ClassificationPreset
+from evidently.legacy.report import Report
+from evidently.legacy.metric_preset import DataDriftPreset, ClassificationPreset
+from evidently.legacy.pipeline.column_mapping import ColumnMapping
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -133,34 +131,45 @@ def run_data_drift_analysis(reference_df: pd.DataFrame, current_df: pd.DataFrame
 
     # Save report as JSON
     report_path = f"{output_path}/data_drift_report.json"
-    data_drift_report.save_json(report_path)
+    with open(report_path, 'w') as f:
+        json.dump(data_drift_report.as_dict(), f, indent=2, default=str)
     print(f"✅ Data drift report saved to {report_path}")
 
     # Get drift results
     result = data_drift_report.as_dict()
 
-    # Extract drift metrics
-    drift_detected = result['metrics'][0]['result']['drift_detected']
-    drift_score = result['metrics'][0]['result']['drift_score']
+    # Extract drift metrics - find DatasetDriftMetric
+    drift_detected = False
+    drift_score = 0.0
+
+    for metric in result.get('metrics', []):
+        if metric.get('metric') == 'DatasetDriftMetric':
+            drift_detected = metric['result'].get('dataset_drift', False)
+            drift_score = metric['result'].get('drift_share', 0.0)
+            break
 
     print(f"\n📈 Data Drift Results:")
     print(f"  Drift Detected: {'Yes' if drift_detected else 'No'}")
     print(f"  Drift Score: {drift_score:.4f}")
 
     # Show per-column drift
-    if 'drift_by_columns' in result['metrics'][0]['result']:
-        print("\n  Drift by Column:")
-        for col, col_drift in result['metrics'][0]['result']['drift_by_columns'].items():
-            if isinstance(col_drift, dict) and 'drift_score' in col_drift:
-                status = "⚠️" if col_drift['drift_detected'] else "✅"
-                print(f"    {status} {col}: {col_drift['drift_score']:.4f}")
+    for metric in result.get('metrics', []):
+        if metric.get('metric') == 'DataDriftTable':
+            drift_by_columns = metric['result'].get('drift_by_columns', {})
+            if drift_by_columns:
+                print("\n  Drift by Column:")
+                for col, col_drift in drift_by_columns.items():
+                    if isinstance(col_drift, dict) and 'drift_score' in col_drift:
+                        status = "⚠️" if col_drift['drift_detected'] else "✅"
+                        print(f"    {status} {col}: {col_drift['drift_score']:.4f}")
+            break
 
     return result
 
 
 def run_target_drift_analysis(reference_df: pd.DataFrame, current_df: pd.DataFrame,
                                output_path: str = "model-drift/reports"):
-    """Run target drift analysis."""
+    """Run target drift analysis using classification preset."""
     os.makedirs(output_path, exist_ok=True)
 
     # Preprocess data
@@ -176,8 +185,9 @@ def run_target_drift_analysis(reference_df: pd.DataFrame, current_df: pd.DataFra
 
     print("\n📊 Running Target Drift Analysis...")
 
+    # Use classification preset which includes target drift
     target_drift_report = Report(metrics=[
-        TargetDriftPreset()
+        ClassificationPreset()
     ])
 
     target_drift_report.run(
@@ -187,93 +197,13 @@ def run_target_drift_analysis(reference_df: pd.DataFrame, current_df: pd.DataFra
     )
 
     # Save report
-    report_path = f"{output_path}/target_drift_report.json"
-    target_drift_report.save_json(report_path)
-    print(f"✅ Target drift report saved to {report_path}")
+    report_path = f"{output_path}/classification_report.json"
+    with open(report_path, 'w') as f:
+        json.dump(target_drift_report.as_dict(), f, indent=2, default=str)
+    print(f"✅ Classification report saved to {report_path}")
 
     result = target_drift_report.as_dict()
     return result
-
-
-def run_prediction_drift_analysis(reference_df: pd.DataFrame, current_df: pd.DataFrame,
-                                   predictions_ref: list = None, predictions_curr: list = None,
-                                   output_path: str = "model-drift/reports"):
-    """Run prediction drift analysis."""
-    os.makedirs(output_path, exist_ok=True)
-
-    print("\n📊 Running Prediction Drift Analysis...")
-
-    # If we have predictions, add them to the dataframes
-    if predictions_ref is not None and predictions_curr is None:
-        # Use actual data as current if no separate predictions
-        predictions_curr = predictions_ref[len(predictions_ref)//2:]
-
-    # For now, just use data drift on target as proxy
-    reference_df = preprocess_for_drift(reference_df)
-    current_df = preprocess_for_drift(current_df)
-
-    mapping = get_column_mapping()
-
-    # Create classification report
-    if 'prediction' in reference_df.columns and 'prediction' in current_df.columns:
-        classification_report = Report(metrics=[
-            ClassificationPreset()
-        ])
-
-        classification_report.run(
-            reference_data=reference_df,
-            current_data=current_df,
-            column_mapping=mapping
-        )
-
-        report_path = f"{output_path}/classification_report.json"
-        classification_report.save_json(report_path)
-        print(f"✅ Classification report saved to {report_path}")
-
-        return classification_report.as_dict()
-
-    return None
-
-
-def generate_html_report(reference_df: pd.DataFrame, current_df: pd.DataFrame,
-                         output_path: str = "model-drift/reports"):
-    """Generate interactive HTML dashboard."""
-    os.makedirs(output_path, exist_ok=True)
-
-    # Preprocess data
-    reference_df = preprocess_for_drift(reference_df)
-    current_df = preprocess_for_drift(current_df)
-
-    mapping = get_column_mapping()
-
-    # Filter available features
-    available_numerical = [f for f in mapping.numerical_features if f in reference_df.columns]
-    available_categorical = [f for f in mapping.categorical_features if f in reference_df.columns]
-    mapping.numerical_features = available_numerical
-    mapping.categorical_features = available_categorical
-
-    if mapping.target not in current_df.columns:
-        mapping.target = None
-
-    # Create dashboard with multiple tabs
-    dashboard = Dashboard(tabs=[
-        DataDriftTab(),
-        CatTargetDriftTab(),
-        NumTargetDriftTab()
-    ])
-
-    dashboard.calculate(
-        reference_data=reference_df,
-        current_data=current_df,
-        column_mapping=mapping
-    )
-
-    # Save dashboard as HTML
-    dashboard_path = f"{output_path}/drift_dashboard.html"
-    dashboard.save(dashboard_path)
-    print(f"✅ Interactive dashboard saved to {dashboard_path}")
-
-    return dashboard_path
 
 
 def main():
@@ -302,24 +232,26 @@ def main():
     data_drift_result = run_data_drift_analysis(reference_df, current_df, output_path)
     target_drift_result = run_target_drift_analysis(reference_df, current_df, output_path)
 
-    # Generate HTML dashboard
-    generate_html_report(reference_df, current_df, output_path)
-
     # Summary
     print("\n" + "=" * 60)
     print("📋 DRIFT MONITORING SUMMARY")
     print("=" * 60)
 
     if data_drift_result:
-        drift_detected = data_drift_result['metrics'][0]['result']['drift_detected']
-        drift_score = data_drift_result['metrics'][0]['result']['drift_score']
+        drift_detected = False
+        drift_score = 0.0
+
+        for metric in data_drift_result.get('metrics', []):
+            if metric.get('metric') == 'DatasetDriftMetric':
+                drift_detected = metric['result'].get('dataset_drift', False)
+                drift_score = metric['result'].get('drift_share', 0.0)
+                break
 
         print(f"\n🔹 Data Drift Status: {'⚠️ DRIFT DETECTED' if drift_detected else '✅ STABLE'}")
         print(f"🔹 Drift Score: {drift_score:.4f}")
         print(f"\n📁 Reports saved to: {output_path}/")
         print(f"   - data_drift_report.json")
-        print(f"   - target_drift_report.json")
-        print(f"   - drift_dashboard.html")
+        print(f"   - classification_report.json")
 
     print("\n✅ Drift monitoring complete!")
 
