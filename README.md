@@ -65,6 +65,12 @@ data-drift-monitoring/
 │   ├── Pulumi.yaml          # Pulumi project config
 │   ├── Pulumi.dev.yaml      # Pulumi dev stack config
 │   └── requirements.txt     # Pulumi specific dependencies
+├── model-drift/              ← NEW
+│   └── scripts/
+│       ├── prediction-generator.py  # generates predictions on EC2
+│       ├── monitor.py               # Evidently AI drift reports
+│       ├── dataset-upload.py        # uploads dataset to S3
+│       └── model-upload.py          # uploads model to S3
 ├── monitoring/
 │   └── prometheus.yml       # Prometheus scrape config
 ├── docker-compose.yml       # Runs all 4 containers together
@@ -171,8 +177,8 @@ python3 s3_model_deploy.py
 ```
 
 ### Phase 4 — Set Up IAM Permissions
-
-<!-- - Go to **AWS Console → IAM → Policies → Create Policy**
+the following is old setup which is manually permission, now ✅ Automatically handled by Pulumi — no manual setup needed!
+- Go to **AWS Console → IAM → Policies → Create Policy**
 - Create policy `S3ModelAccessPolicy` with S3 access:
 
 ```json
@@ -192,8 +198,8 @@ python3 s3_model_deploy.py
 ```
 
 - Create role `EC2S3AccessRole` and attach `S3ModelAccessPolicy`
-- Attach the role to your EC2 instance via **Actions → Security → Modify IAM Role** -->
-✅ Automatically handled by Pulumi — no manual setup needed!
+- Attach the role to your EC2 instance via **Actions → Security → Modify IAM Role**
+
 
 
 
