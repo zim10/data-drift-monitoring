@@ -5,7 +5,7 @@ import time
 import random
 from tqdm import tqdm
 
-API_URL = "http://18.141.215.53:8000/predict"  # ← replace this
+API_URL = "http://47.129.141.210:8000/predict"  # ← replace this with your new ec2 Public IPv4 address
 
 df = pd.read_csv("WA_FnUseC_TelcoCustomerChurn.csv")
 

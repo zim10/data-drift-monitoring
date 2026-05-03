@@ -249,7 +249,8 @@ curl -o WA_FnUseC_TelcoCustomerChurn.csv \
   https://raw.githubusercontent.com/minhaz00/MLOps-Project-Customer-Churn-Prediction/main/Data/Telco-Customer-Churn.csv
 
 # Update EC2 IP in drift_simulator.py first then run:
-python3 drift_simulator.py
+python3 drift_simulator.py 
+# before running must change the ipaddress here; API_URL = "http://47.129.141.210:8000/predict"  # ← replace this with your new ec2 Public IPv4 address
 ```
 
 ### Phase 8 — Visualize in Grafana
@@ -284,7 +285,7 @@ python3 drift_simulator.py
 
 ## Services & Ports
 
-| Service | Port | URL |
+| Service | Port | URL |  
 |---|---|---|
 | FastAPI | 8000 | `http://<EC2-IP>:8000/docs` |
 | Prometheus | 9090 | `http://<EC2-IP>:9090` |
