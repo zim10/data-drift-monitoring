@@ -1,156 +1,209 @@
-"""
-Prediction Generator
-Generates predictions from the ML model and saves results for drift monitoring.
-"""
-
-import boto3
+import requests
+import json
+import random
 import pandas as pd
-import pickle
-import numpy as np
-import os
-import sys
+import time
+import argparse
+from sqlalchemy import create_engine
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Configuration
+API_ENDPOINT = "http://localhost:8000/predict"  # Adjust if your API is on a different host or port
+DB_CONFIG = {
+    "user": "my_user",
+    "password": "my_password",
+    "host": "postgres",  # Change to your EC2's public IP if accessing from outside
+    "port": "5432",
+    "database": "my_db"
+}
 
+def generate_customer_data(num_samples=10):
+    """Generate random customer data for churn prediction"""
+    customers = []
+    
+    for _ in range(num_samples):
+        # Binary features (0 or 1)
+        gender = random.randint(0, 1)
+        senior_citizen = random.randint(0, 1)
+        partner = random.randint(0, 1)
+        dependents = random.randint(0, 1)
+        phone_service = random.randint(0, 1)
+        multiple_lines = random.randint(0, 1) if phone_service == 1 else 0
+        online_security = random.randint(0, 1)
+        online_backup = random.randint(0, 1)
+        device_protection = random.randint(0, 1)
+        tech_support = random.randint(0, 1)
+        streaming_tv = random.randint(0, 1)
+        streaming_movies = random.randint(0, 1)
+        paperless_billing = random.randint(0, 1)
+        
+        # Continuous features
+        tenure = round(random.uniform(0, 72), 1)  # 0-72 months
+        monthly_charges = round(random.uniform(20, 120), 2)  # $20-$120
+        total_charges = round(tenure * monthly_charges * random.uniform(0.9, 1.1), 2)  # Approx tenure * monthly with some variation
+        
+        # Create one-hot encoded features
+        # Internet Service (choose one)
+        internet_options = ["DSL", "Fiber_optic", "No"]
+        internet_choice = random.choice(internet_options)
+        internet_service_dsl = 1 if internet_choice == "DSL" else 0
+        internet_service_fiber_optic = 1 if internet_choice == "Fiber_optic" else 0
+        internet_service_no = 1 if internet_choice == "No" else 0
+        
+        # Contract (choose one)
+        contract_options = ["Month_to_month", "One_year", "Two_year"]
+        contract_choice = random.choice(contract_options)
+        contract_month_to_month = 1 if contract_choice == "Month_to_month" else 0
+        contract_one_year = 1 if contract_choice == "One_year" else 0
+        contract_two_year = 1 if contract_choice == "Two_year" else 0
+        
+        # Payment Method (choose one)
+        payment_options = ["Bank_transfer_automatic", "Credit_card_automatic", "Electronic_check", "Mailed_check"]
+        payment_choice = random.choice(payment_options)
+        payment_bank_transfer = 1 if payment_choice == "Bank_transfer_automatic" else 0
+        payment_credit_card = 1 if payment_choice == "Credit_card_automatic" else 0
+        payment_electronic_check = 1 if payment_choice == "Electronic_check" else 0
+        payment_mailed_check = 1 if payment_choice == "Mailed_check" else 0
+        
+        customer = {
+            "gender": gender,
+            "SeniorCitizen": senior_citizen,
+            "Partner": partner,
+            "Dependents": dependents,
+            "tenure": tenure,
+            "PhoneService": phone_service,
+            "MultipleLines": multiple_lines,
+            "OnlineSecurity": online_security,
+            "OnlineBackup": online_backup,
+            "DeviceProtection": device_protection,
+            "TechSupport": tech_support,
+            "StreamingTV": streaming_tv,
+            "StreamingMovies": streaming_movies,
+            "PaperlessBilling": paperless_billing,
+            "MonthlyCharges": monthly_charges,
+            "TotalCharges": total_charges,
+            "InternetService_DSL": internet_service_dsl,
+            "InternetService_Fiber_optic": internet_service_fiber_optic,
+            "InternetService_No": internet_service_no,
+            "Contract_Month_to_month": contract_month_to_month,
+            "Contract_One_year": contract_one_year,
+            "Contract_Two_year": contract_two_year,
+            "PaymentMethod_Bank_transfer_automatic": payment_bank_transfer,
+            "PaymentMethod_Credit_card_automatic": payment_credit_card,
+            "PaymentMethod_Electronic_check": payment_electronic_check,
+            "PaymentMethod_Mailed_check": payment_mailed_check
+        }
+        
+        customers.append(customer)
+    
+    return customers
 
-def load_model_from_s3(bucket_name: str, model_key: str = "model.pkl"):
-    """Load the ML model from S3."""
-    s3_client = boto3.client('s3')
-
+def make_prediction_request(data):
+    """Send prediction request to the FastAPI endpoint"""
     try:
-        # Download model to temp file
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
-            s3_client.download_fileobj(bucket_name, model_key, tmp)
-            tmp_path = tmp.name
-
-        with open(tmp_path, 'rb') as f:
-            model = pickle.load(f)
-
-        os.unlink(tmp_path)
-        print("✅ Model loaded from S3")
-        return model
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(API_ENDPOINT, data=json.dumps(data), headers=headers)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Error making prediction: {response.status_code}")
+            print(f"Response: {response.text}")
+            return None
     except Exception as e:
-        print(f"❌ Failed to load model: {e}")
+        print(f"Exception occurred while making prediction request: {str(e)}")
         return None
 
-
-def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Preprocess telco customer churn data for prediction."""
-    df = df.copy()
-
-    # Drop customerID as it's not a feature
-    if 'customerID' in df.columns:
-        df = df.drop('customerID', axis=1)
-
-    # Remove target column if present
-    if 'Churn' in df.columns:
-        df = df.drop('Churn', axis=1)
-
-    # Convert TotalCharges to numeric FIRST (before categorical)
-    if 'TotalCharges' in df.columns:
-        df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
-
-    # Handle ALL remaining categorical columns - convert to numeric
-    for col in df.columns:
-        if df[col].dtype == 'object':
-            # Convert to categorical codes
-            df[col] = pd.Categorical(df[col]).codes
-
-    # Convert ALL columns to numeric, fill NaN with 0
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    return df
-
-
-def generate_predictions(model, df: pd.DataFrame) -> np.ndarray:
-    """Generate predictions from the model."""
+def verify_database_entries(num_expected):
+    """Verify that entries were added to the database"""
     try:
-        # Remove target column if present
-        if 'Churn' in df.columns:
-            df = df.drop('Churn', axis=1)
-
-        # Convert to numpy array to bypass feature name checking
-        X = df.values
-
-        predictions = model.predict(X)
-        probabilities = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else None
-
-        return predictions, probabilities
+        connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+        engine = create_engine(connection_string)
+        
+        query = "SELECT COUNT(*) FROM predictions"
+        result = pd.read_sql(query, engine)
+        count = result.iloc[0, 0]
+        
+        print(f"Database verification: Found {count} records in predictions table")
+        
+        if count >= num_expected:
+            print("Verification successful!")
+        else:
+            print("Expected at least {num_expected} records, but found {count}")
+        
+        # Get most recent entries
+        recent_query = "SELECT * FROM predictions ORDER BY id DESC LIMIT 5"
+        recent_records = pd.read_sql(recent_query, engine)
+        print("\nMost recent prediction records:")
+        print(recent_records)
+        
+        return count
     except Exception as e:
-        print(f"❌ Prediction failed: {e}")
-        return None, None
-
-
-def save_predictions(predictions: np.ndarray, probabilities: np.ndarray,
-                     original_df: pd.DataFrame, output_path: str):
-    """Save predictions along with original data."""
-    result_df = original_df.copy()
-
-    if 'customerID' not in result_df.columns:
-        result_df.insert(0, 'customerID', range(len(result_df)))
-
-    result_df['prediction'] = predictions
-    if probabilities is not None:
-        result_df['probability'] = probabilities
-
-    result_df.to_csv(output_path, index=False)
-    print(f"✅ Saved predictions to {output_path}")
-
+        print(f"Error verifying database entries: {str(e)}")
+        return -1
 
 def main():
-    # Configuration
-    BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'your-bucket-name')
-    INPUT_DATA_PATH = "model-drift/data/current.csv"
-    PREDICTIONS_OUTPUT_PATH = "model-drift/data/predictions.csv"
-
-    # Create output directory
-    os.makedirs("model-drift/data", exist_ok=True)
-
-    # Load model
-    model = load_model_from_s3(BUCKET_NAME)
-    if model is None:
-        # Fallback: try loading local model
-        if os.path.exists("model.pkl"):
-            with open("model.pkl", 'rb') as f:
-                model = pickle.load(f)
-            print("✅ Model loaded from local file")
-        else:
-            print("❌ No model available")
-            return
-
-    # Load dataset
-    if not os.path.exists(INPUT_DATA_PATH):
-        print(f"❌ Input data not found: {INPUT_DATA_PATH}")
-        print("Run dataset-upload.py first to download data")
+    parser = argparse.ArgumentParser(description="Generate predictions and store in PostgreSQL")
+    parser.add_argument("--num-samples", type=int, default=10, 
+                        help="Number of customer samples to generate (default: 10)")
+    parser.add_argument("--batch-size", type=int, default=5,
+                        help="Batch size for API requests (default: 5)")
+    parser.add_argument("--api-host", type=str, default="localhost",
+                        help="Hostname/IP where the FastAPI service is running (default: localhost)")
+    parser.add_argument("--api-port", type=int, default=8000,
+                        help="Port where the FastAPI service is running (default: 8000)")
+    parser.add_argument("--db-host", type=str, default="localhost",
+                        help="Hostname/IP where PostgreSQL is running (default: localhost)")
+    
+    args = parser.parse_args()
+    
+    # Update configuration based on arguments
+    global API_ENDPOINT
+    API_ENDPOINT = f"http://{args.api_host}:{args.api_port}/predict"
+    DB_CONFIG["host"] = args.db_host
+    #DB_CONFIG["port"] = args.db_port
+    
+    print(f"=== Churn Prediction Generator ===")
+    print(f"API Endpoint: {API_ENDPOINT}")
+    print(f"Database Host: {DB_CONFIG['host']}")
+    print(f"Generating {args.num_samples} customer records...")
+    
+    # Record starting count
+    starting_count = verify_database_entries(0)
+    if starting_count == -1:
+        print("Cannot connect to database. Please check your connection settings.")
         return
-
-    df = pd.read_csv(INPUT_DATA_PATH)
-    print(f"Loaded {len(df)} records from {INPUT_DATA_PATH}")
-
-    # Preprocess
-    df_processed = preprocess_data(df)
-
-    # Generate predictions
-    predictions, probabilities = generate_predictions(model, df_processed)
-
-    if predictions is not None:
-        # Save predictions
-        save_predictions(predictions, probabilities, df, PREDICTIONS_OUTPUT_PATH)
-
-        # Print summary
-        print(f"\n📊 Prediction Summary:")
-        print(f"  Total predictions: {len(predictions)}")
-        print(f"  Churn predicted: {sum(predictions)} ({sum(predictions)/len(predictions)*100:.1f}%)")
-        print(f"  No churn: {len(predictions) - sum(predictions)} ({(len(predictions) - sum(predictions))/len(predictions)*100:.1f}%)")
-
-        if probabilities is not None:
-            print(f"  Avg probability: {np.mean(probabilities):.3f}")
-
-    print("\n✅ Prediction generation complete!")
-
+    
+    # Generate data and make predictions
+    customers = generate_customer_data(args.num_samples)
+    print(f"Generated {len(customers)} customer profiles")
+    
+    # Process in batches
+    total_predictions = 0
+    batch_size = min(args.batch_size, args.num_samples)
+    
+    for i in range(0, len(customers), batch_size):
+        batch = customers[i:i+batch_size]
+        print(f"Processing batch {i//batch_size + 1} with {len(batch)} customers...")
+        
+        result = make_prediction_request(batch)
+        if result and "predictions" in result:
+            total_predictions += len(result["predictions"])
+            print(f"Batch predictions: {result['predictions']}")
+        
+        # Small delay to avoid overwhelming the API
+        time.sleep(0.5)
+    
+    print(f"\nProcess completed. Made predictions for {total_predictions} customers.")
+    
+    # Verify final count
+    final_count = verify_database_entries(starting_count + total_predictions)
+    added_records = final_count - starting_count
+    
+    print(f"\nSummary:")
+    print(f"- Starting record count: {starting_count}")
+    print(f"- Attempted to add: {args.num_samples}")
+    print(f"- Successfully added: {added_records}")
+    print(f"- Final record count: {final_count}")
 
 if __name__ == "__main__":
     main()

@@ -236,7 +236,8 @@ newgrp docker
 sudo reboot
 # SSH back in after 1-2 minutes
 
-# Clone repo and run containers
+# install python virtual env , Clone repo, install requirement.txt and run containers
+#before cloning install python and python virtual environment and after cloning install pip install -r requirements.txt must
 git clone https://github.com/zim10/data-drift-monitoring.git
 cd data-drift-monitoring
 docker-compose up -d
@@ -245,7 +246,7 @@ docker-compose up -d
 docker ps
 ```
 
-### Phase 7 — Run Drift Simulator
+### Phase 7 — Run Drift Simulator, this phase for data drift
 
 ```bash
 # On Poridhi server (not EC2)
@@ -267,6 +268,32 @@ python3 drift_simulator.py
 3. URL: `http://<EC2-PUBLIC-IP>:9090` → **Save & Test**
 4. Go to **Dashboards → New Dashboard → Add Visualization**
 5. Use these Prometheus queries:
+
+### Phase 9 — Run monitor for  model drift
+
+1. go to model-drift folder, first upload dataset in s3 to monitor model drift
+
+
+```bash
+# On local server (not EC2)
+cd ~/data-drift-monitoring/model-drift
+
+# Download dataset
+curl -o WA_FnUseC_TelcoCustomerChurn.csv \
+  https://raw.githubusercontent.com/minhaz00/MLOps-Project-Customer-Churn-Prediction/main/Data/Telco-Customer-Churn.csv
+
+#  run:
+python3 dataset-upload.py 
+# it will upload your dataset in s3 bucket and you can verify it
+```
+
+2. From Ec2, run prediction-generator.py. This script will generate 10 customer records and store them in the postgres database.
+3. Next, run monitor.py from ec2, This script will fetch reference data from S3, current data from Postgres, monitor the data drift, features drift using Evidently ai, create reports out of them and finally store them in S3 bucket
+4. then Verify the drift reports on S3 Console
+- successfully monitored model drifts using Evidently AI of Churn Prediction Model on EC2 instance and saved the drifts report in S3 bucket.
+
+
+
 
 | Panel | Prometheus Query |
 |---|---|
@@ -327,6 +354,8 @@ python3 drift_simulator.py
 ## Useful Docker Commands
 
 ```bash
+docker --version  # docker version check
+docker-compose --version  #docker compose version check
 docker-compose up -d       # start all containers
 docker-compose down        # stop all containers
 docker ps                  # check running containers

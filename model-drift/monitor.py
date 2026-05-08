@@ -1,260 +1,194 @@
-"""
-Model Drift Monitor using Evidently AI
-Monitors data drift, target drift, and prediction drift.
-"""
-
-import pandas as pd
-import numpy as np
 import os
-import sys
-import json
+import boto3
+import pandas as pd
+import psycopg2
+import io
+from sqlalchemy import create_engine
+from evidently.report import Report
+from evidently.metric_preset import DataDriftPreset, DataQualityPreset
+from evidently.metrics import ColumnDriftMetric, ColumnSummaryMetric
 from datetime import datetime
-from evidently.legacy.report import Report
-from evidently.legacy.metric_preset import DataDriftPreset, ClassificationPreset
-from evidently.legacy.pipeline.column_mapping import ColumnMapping
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# S3 configuration (can be overridden with env vars)
+S3_BUCKET = os.environ.get("S3_BUCKET", "customer-churn-model-bucket-25ae6be")
+S3_FILE_KEY = os.environ.get("S3_FILE_KEY", "my_dataset.csv")  # Reference dataset
+REPORT_OUTPUT_DIR = "reports"
 
+# Database configuration (defaults to localhost for local runs, postgres for Docker)
+DB_USER = os.environ.get("DB_USER", "my_user")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "my_password")
+DB_NAME = os.environ.get("DB_NAME", "my_db")
+DB_HOST = os.environ.get("DB_HOST", "localhost")  # Use "postgres" in Docker, "localhost" locally
 
-def load_data(reference_path: str, current_path: str):
-    """Load reference and current datasets."""
-    reference_df = pd.read_csv(reference_path)
-    current_df = pd.read_csv(current_path)
+def create_db_connection():
+    """Create a connection to the PostgreSQL database"""
+    try:
+        connection_string = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:5432/{DB_NAME}"
+        engine = create_engine(connection_string)
+        return engine
+    except Exception as e:
+        print(f"Error connecting to database: {str(e)}")
+        raise
 
-    print(f"Reference data: {len(reference_df)} rows")
-    print(f"Current data: {len(current_df)} rows")
+def fetch_postgres_data(engine):
+    """Fetch prediction records from PostgreSQL database"""
+    try:
+        query = "SELECT * FROM predictions"
+        df = pd.read_sql(query, engine)
+        print(f"Retrieved {len(df)} records from PostgreSQL")
+        return df
+    except Exception as e:
+        print(f"Error fetching data from PostgreSQL: {str(e)}")
+        raise
 
-    return reference_df, current_df
+def fetch_s3_data():
+    """Fetch reference dataset from S3 bucket"""
+    try:
+        s3 = boto3.client("s3")
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=S3_FILE_KEY)
+        df = pd.read_csv(io.BytesIO(obj["Body"].read()))
+        print(f"Retrieved reference dataset from S3 with {len(df)} records")
+        return df
+    except Exception as e:
+        print(f"Error fetching data from S3: {str(e)}")
+        raise
 
+def prepare_datasets(current_df, reference_df):
+    """Prepare both datasets for comparison by aligning columns"""
+    # Ensure column alignment, drop any columns that don't exist in both datasets
+    common_columns = list(set(current_df.columns).intersection(set(reference_df.columns)))
 
-def get_column_mapping() -> ColumnMapping:
-    """Define column mapping for Evidently analysis."""
-    mapping = ColumnMapping()
+    # Remove 'id' and 'prediction' from comparison if they exist
+    for col in ['id', 'prediction']:
+        if col in common_columns:
+            common_columns.remove(col)
 
-    # Define target column (for churn prediction)
-    mapping.target = 'Churn'
+    print(f"Comparing {len(common_columns)} common columns")
 
-    # Define prediction column (if available)
-    mapping.prediction = 'prediction'
+    # Get the prepared dataframes
+    current_prep = current_df[common_columns].copy()
+    reference_prep = reference_df[common_columns].copy()
 
-    # Numerical features
-    mapping.numerical_features = [
-        'tenure',
-        'MonthlyCharges',
-        'TotalCharges'
-    ]
+    # Convert string columns to numeric where possible (e.g., "Yes"/"No" -> 1/0)
+    for col in common_columns:
+        # Try to convert reference column to numeric if it's string/object
+        if reference_prep[col].dtype == 'object':
+            # Try mapping common string values
+            unique_ref = set(reference_prep[col].dropna().unique())
+            if unique_ref <= {'Yes', 'No', 'True', 'False', '1', '0'}:
+                # Map to numeric
+                ref_mapped = reference_prep[col].map({'Yes': 1, 'No': 0, 'True': 1, 'False': 0, '1': 1, '0': 0})
+                if current_prep[col].dtype == 'object':
+                    current_prep[col] = current_prep[col].map({'Yes': 1, 'No': 0, 'True': 1, 'False': 0, '1': 1, '0': 0})
+                reference_prep[col] = ref_mapped
 
-    # Categorical features
-    mapping.categorical_features = [
-        'gender',
-        'SeniorCitizen',
-        'Partner',
-        'Dependents',
-        'PhoneService',
-        'MultipleLines',
-        'InternetService',
-        'OnlineSecurity',
-        'OnlineBackup',
-        'DeviceProtection',
-        'TechSupport',
-        'StreamingTV',
-        'StreamingMovies',
-        'Contract',
-        'PaperlessBilling',
-        'PaymentMethod'
-    ]
+    # Convert all columns to native Python types for Evidently compatibility
+    # This handles StringDtype, nullable types, etc.
+    for col in common_columns:
+        current_prep[col] = current_prep[col].apply(lambda x: str(x) if pd.notna(x) else "")
+        reference_prep[col] = reference_prep[col].apply(lambda x: str(x) if pd.notna(x) else "")
 
-    return mapping
+    # Recreate DataFrames with plain types
+    current_prep = pd.DataFrame(current_prep, columns=common_columns)
+    reference_prep = pd.DataFrame(reference_prep, columns=common_columns)
 
+    return current_prep, reference_prep
 
-def preprocess_for_drift(df: pd.DataFrame) -> pd.DataFrame:
-    """Preprocess data for drift detection."""
-    df = df.copy()
+def generate_drift_report(current_data, reference_data, report_name="drift_report"):
+    """Generate Evidently data drift report"""
+    try:
+        # Create directory for reports if it doesn't exist
+        os.makedirs(REPORT_OUTPUT_DIR, exist_ok=True)
+        
+        # Format current timestamp for the report filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = f"{REPORT_OUTPUT_DIR}/{report_name}_{timestamp}.html"
+        
+        # Prepare data for comparison
+        current_data_prep, reference_data_prep = prepare_datasets(current_data, reference_data)
+        
+        # Create and run the report
+        report = Report(metrics=[
+            DataDriftPreset(),
+            DataQualityPreset()
+])
+        
+        report.run(reference_data=reference_data_prep, current_data=current_data_prep)
+        report.save_html(report_path)
+        
+        print(f"Drift report saved to {report_path}")
+        return report_path
+    except Exception as e:
+        print(f"Error generating drift report: {str(e)}")
+        raise
 
-    # Drop customerID if present
-    if 'customerID' in df.columns:
-        df = df.drop('customerID', axis=1)
+def upload_report_to_s3(report_path, s3_key=None):
+    """Upload generated report to S3 bucket"""
+    try:
+        s3 = boto3.client("s3")
+        if s3_key is None:
+            s3_key = f"reports/{os.path.basename(report_path)}"
+        
+        s3.upload_file(report_path, S3_BUCKET, s3_key)
+        print(f"Report uploaded to S3: s3://{S3_BUCKET}/{s3_key}")
+    except Exception as e:
+        print(f"Error uploading report to S3: {str(e)}")
 
-    # Convert TotalCharges to numeric
-    if 'TotalCharges' in df.columns:
-        df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
-        df['TotalCharges'] = df['TotalCharges'].fillna(df['TotalCharges'].median())
-
-    # Convert target to string for classification
-    if 'Churn' in df.columns:
-        df['Churn'] = df['Churn'].map({'Yes': 1, 'No': 0, 1: 1, 0: 0})
-        df['Churn'] = df['Churn'].fillna(0).astype(int)
-
-    # Convert SeniorCitizen to category
-    if 'SeniorCitizen' in df.columns:
-        df['SeniorCitizen'] = df['SeniorCitizen'].astype('category')
-
-    return df
-
-
-def run_data_drift_analysis(reference_df: pd.DataFrame, current_df: pd.DataFrame,
-                            output_path: str = "model-drift/reports"):
-    """Run data drift analysis using Evidently AI."""
-    os.makedirs(output_path, exist_ok=True)
-
-    # Preprocess data
-    reference_df = preprocess_for_drift(reference_df)
-    current_df = preprocess_for_drift(current_df)
-
-    # Get column mapping
-    mapping = get_column_mapping()
-
-    # Filter to only include features that exist in both dataframes
-    available_numerical = [f for f in mapping.numerical_features if f in reference_df.columns]
-    available_categorical = [f for f in mapping.categorical_features if f in reference_df.columns]
-
-    mapping.numerical_features = available_numerical
-    mapping.categorical_features = available_categorical
-
-    # Remove target from features if not in current
-    if mapping.target not in current_df.columns:
-        mapping.target = None
-
-    # Create Data Drift Report
-    print("\n📊 Running Data Drift Analysis...")
-
-    data_drift_report = Report(metrics=[
-        DataDriftPreset()
-    ])
-
-    data_drift_report.run(
-        reference_data=reference_df,
-        current_data=current_df,
-        column_mapping=mapping
-    )
-
-    # Save report as JSON
-    report_path = f"{output_path}/data_drift_report.json"
-    with open(report_path, 'w') as f:
-        json.dump(data_drift_report.as_dict(), f, indent=2, default=str)
-    print(f"✅ Data drift report saved to {report_path}")
-
-    # Get drift results
-    result = data_drift_report.as_dict()
-
-    # Extract drift metrics - find DatasetDriftMetric
-    drift_detected = False
-    drift_score = 0.0
-
-    for metric in result.get('metrics', []):
-        if metric.get('metric') == 'DatasetDriftMetric':
-            drift_detected = metric['result'].get('dataset_drift', False)
-            drift_score = metric['result'].get('drift_share', 0.0)
-            break
-
-    print(f"\n📈 Data Drift Results:")
-    print(f"  Drift Detected: {'Yes' if drift_detected else 'No'}")
-    print(f"  Drift Score: {drift_score:.4f}")
-
-    # Show per-column drift
-    for metric in result.get('metrics', []):
-        if metric.get('metric') == 'DataDriftTable':
-            drift_by_columns = metric['result'].get('drift_by_columns', {})
-            if drift_by_columns:
-                print("\n  Drift by Column:")
-                for col, col_drift in drift_by_columns.items():
-                    if isinstance(col_drift, dict) and 'drift_score' in col_drift:
-                        status = "⚠️" if col_drift['drift_detected'] else "✅"
-                        print(f"    {status} {col}: {col_drift['drift_score']:.4f}")
-            break
-
-    return result
-
-
-def run_target_drift_analysis(reference_df: pd.DataFrame, current_df: pd.DataFrame,
-                               output_path: str = "model-drift/reports"):
-    """Run target drift analysis using classification preset."""
-    os.makedirs(output_path, exist_ok=True)
-
-    # Preprocess data
-    reference_df = preprocess_for_drift(reference_df)
-    current_df = preprocess_for_drift(current_df)
-
-    mapping = get_column_mapping()
-
-    # Check if target exists
-    if mapping.target not in reference_df.columns or mapping.target not in current_df.columns:
-        print("⚠️ Target column not found, skipping target drift analysis")
-        return None
-
-    print("\n📊 Running Target Drift Analysis...")
-
-    # Use classification preset which includes target drift
-    target_drift_report = Report(metrics=[
-        ClassificationPreset()
-    ])
-
-    target_drift_report.run(
-        reference_data=reference_df,
-        current_data=current_df,
-        column_mapping=mapping
-    )
-
-    # Save report
-    report_path = f"{output_path}/classification_report.json"
-    with open(report_path, 'w') as f:
-        json.dump(target_drift_report.as_dict(), f, indent=2, default=str)
-    print(f"✅ Classification report saved to {report_path}")
-
-    result = target_drift_report.as_dict()
-    return result
-
+def generate_feature_drift_reports(current_data, reference_data):
+    """Generate individual feature drift reports for important features"""
+    try:
+        os.makedirs(f"{REPORT_OUTPUT_DIR}/features", exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Define important features to monitor individually
+        important_features = [
+            "tenure", "MonthlyCharges", "TotalCharges", 
+            "Contract_Month_to_month", "InternetService_Fiber_optic"
+        ]
+        
+        # Create individual reports for each important feature
+        for feature in important_features:
+            if feature in current_data.columns and feature in reference_data.columns:
+                report = Report(metrics=[
+                    ColumnDriftMetric(column_name=feature),
+                    ColumnSummaryMetric(column_name=feature)
+                ])
+                
+                current_data_prep, reference_data_prep = prepare_datasets(current_data, reference_data)
+                report.run(reference_data=reference_data_prep, current_data=current_data_prep)
+                
+                report_path = f"{REPORT_OUTPUT_DIR}/features/{feature}_drift_{timestamp}.html"
+                report.save_html(report_path)
+                
+                print(f"Feature drift report for '{feature}' saved to {report_path}")
+                upload_report_to_s3(report_path, f"reports/features/{feature}_drift_{timestamp}.html")
+    except Exception as e:
+        print(f"Error generating feature drift reports: {str(e)}")
 
 def main():
-    """Main function to run drift monitoring."""
-    print("=" * 60)
-    print("🔍 Model Drift Monitor using Evidently AI")
-    print("=" * 60)
-
-    # Paths
-    reference_path = "model-drift/data/reference.csv"
-    current_path = "model-drift/data/current.csv"
-    output_path = "model-drift/reports"
-
-    # Check if data exists
-    if not os.path.exists(reference_path) or not os.path.exists(current_path):
-        print(f"❌ Data files not found!")
-        print(f"   Expected: {reference_path} and {current_path}")
-        print(f"   Run dataset-upload.py first to download and prepare data")
-        return
-
-    # Load data
-    print("\n📥 Loading data...")
-    reference_df, current_df = load_data(reference_path, current_path)
-
-    # Run analyses
-    data_drift_result = run_data_drift_analysis(reference_df, current_df, output_path)
-    target_drift_result = run_target_drift_analysis(reference_df, current_df, output_path)
-
-    # Summary
-    print("\n" + "=" * 60)
-    print("📋 DRIFT MONITORING SUMMARY")
-    print("=" * 60)
-
-    if data_drift_result:
-        drift_detected = False
-        drift_score = 0.0
-
-        for metric in data_drift_result.get('metrics', []):
-            if metric.get('metric') == 'DatasetDriftMetric':
-                drift_detected = metric['result'].get('dataset_drift', False)
-                drift_score = metric['result'].get('drift_share', 0.0)
-                break
-
-        print(f"\n🔹 Data Drift Status: {'⚠️ DRIFT DETECTED' if drift_detected else '✅ STABLE'}")
-        print(f"🔹 Drift Score: {drift_score:.4f}")
-        print(f"\n📁 Reports saved to: {output_path}/")
-        print(f"   - data_drift_report.json")
-        print(f"   - classification_report.json")
-
-    print("\n✅ Drift monitoring complete!")
-
+    """Main function to run monitoring"""
+    try:
+        print("Starting model and data drift monitoring...")
+        
+        # Connect to the database
+        engine = create_db_connection()
+        
+        # Fetch data from both sources
+        current_df = fetch_postgres_data(engine)
+        reference_df = fetch_s3_data()
+        
+        # Generate main drift report
+        report_path = generate_drift_report(current_df, reference_df)
+        
+        # Upload report to S3
+        upload_report_to_s3(report_path)
+        
+        # Generate feature-specific drift reports
+        generate_feature_drift_reports(current_df, reference_df)
+        
+        print("Monitoring completed successfully")
+    except Exception as e:
+        print(f"Error in monitoring process: {str(e)}")
 
 if __name__ == "__main__":
     main()
